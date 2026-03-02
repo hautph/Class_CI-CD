@@ -3,6 +3,12 @@ const app = express();
 const helmet = require('helmet');
 app.use(helmet());
 
+// Vá lỗi: X-Content-Type-Options, X-Powered-By, CSP, POLICY...
+app.use(helmet()); 
+
+// Vá lỗi: Server Leaks Information (X-Powered-By) - dự phòng thêm
+app.disable('x-powered-by'); 
+
 // Giới hạn số lượng request (Rate Limiting) để chống tấn công DOS
 const rateLimit = require('express-rate-limit');
 const limiter = rateLimit({

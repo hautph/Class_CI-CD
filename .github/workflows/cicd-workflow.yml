@@ -121,26 +121,21 @@ jobs:
         }
 
     # 4. DAST: Chạy OWASP ZAP Baseline Scan (Sửa lỗi FileNotFoundError trên Windows)
-    - name: Run OWASP ZAP Baseline Scan (Container)
+    - name: Run OWASP ZAP Baseline Scan
       run: |
-        $finalPort = "3000"
         $p = "${{ secrets.PORT_RUN_CONTAINER }}"
-        if ($p -match '^(\d+):') { $finalPort = $matches[1] } elseif ($p -as [int]) { $finalPort = $p }
+        $finalPort = if ($p -match '^(\d+):') { $matches[1] } else { "3000" }
         
         Write-Host "🛡️ Starting DAST Scan on http://host.docker.internal:$($finalPort) ..."
         
-        # SỬA LẠI LỆNH: 
-        # 1. Thêm -dir /tmp để ZAP ghi file tạm vào thư mục có sẵn trong container
-        # 2. Thêm -v /tmp:/zap/wrk:rw để giả lập thư mục làm việc cho ZAP
+        # Sửa: Chỉ định file report cụ thể để tránh lỗi 'Is a directory'
         docker run --rm `
-          -v /tmp:/zap/wrk:rw `
           ghcr.io/zaproxy/zaproxy:stable zap-baseline.py `
           -t "http://host.docker.internal:$($finalPort)" `
-          -dir /tmp `
+          -r report.html `
           -I
       shell: pwsh
-      continue-on-error: true # Giữ workflow xanh để nhận thông báo Telegram
-
+      continue-on-error: true # Đảm bảo workflow xanh kể cả khi có cảnh báo bảo mật
 
     - name: Docker Retention Policy (Cleanup)
       if: always()
