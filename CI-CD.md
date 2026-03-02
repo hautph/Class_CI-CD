@@ -1,6 +1,6 @@
 ## I. Initializing the Express Application
 ```cmd
-    git clone git@github.com:fdhhhdjd/Class_CI-CD.git
+    git clone git@github.com:hautph/Class_CI-CD.git
 ```
 
 ## II. Setting up Github and SSH
