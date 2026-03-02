@@ -1,12 +1,48 @@
-name: Enterprise CICD + Docker Compose + Auto Rollback
+name: DevSecOps Pipeline + Docker Compose + Trivy + Auto Rollback
 
 on:
   push:
     branches: [ "main" ]
 
 jobs:
-  build-and-deploy:
-    runs-on: self-hosted
+  build-and-security:
+    runs-on: ubuntu-latest # Quét bảo mật nên chạy trên Ubuntu của GitHub để tối ưu hiệu suất
+    outputs:
+      image_tag: ${{ github.sha }}
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v4
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Build Docker Image
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/class_ci-cd:${{ github.sha }} .
+
+    # BƯỚC QUÉT BẢO MẬT (TRIVY)
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '${{ secrets.DOCKER_USERNAME }}/class_ci-cd:${{ github.sha }}'
+        format: 'table'
+        exit-code: '1' # Dừng workflow nếu phát hiện lỗi nghiêm trọng
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Push Image to Docker Hub
+      run: |
+        docker tag ${{ secrets.DOCKER_USERNAME }}/class_ci-cd:${{ github.sha }} ${{ secrets.DOCKER_USERNAME }}/class_ci-cd:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/class_ci-cd:${{ github.sha }}
+        docker push ${{ secrets.DOCKER_USERNAME }}/class_ci-cd:latest
+
+  deploy:
+    needs: build-and-security
+    runs-on: self-hosted # Chạy trên máy Windows của bạn
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
@@ -17,31 +53,15 @@ jobs:
         if (-not $content) { Write-Error "PROD_ENV secret is missing!" }
         Set-Content -Path .env -Value $content
 
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
-
-    - name: Build & Push Docker Image
-      run: |
-        $repo = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd"
-        docker build -t "${repo}:latest" -t "${repo}:${{ github.sha }}" .
-        docker push "${repo}:latest"
-        docker push "${repo}:${{ github.sha }}"
-
     - name: Update with Docker Compose (with Backup)
       run: |
-        # Thiết lập biến môi trường cho Docker Compose
         $env:DOCKER_USERNAME = "${{ secrets.DOCKER_USERNAME }}"
         $rawPort = "${{ secrets.PORT_RUN_CONTAINER }}"
         if (-not $rawPort) { $rawPort = "3000:3000" }
         $env:PORT_CONFIG = $rawPort
 
-        # 1. Dọn dẹp backup cũ
         docker rm -f class_ci-cd_backup 2>$null
 
-        # 2. Backup container hiện tại (đổi tên để giải phóng tên 'class_ci-cd' cho Compose)
         $current = docker ps -a -q --filter "name=class_ci-cd"
         if ($current) {
             Write-Host "📦 Backing up current version..."
@@ -49,28 +69,25 @@ jobs:
             docker stop class_ci-cd_backup
         }
         
-        # 3. Triển khai bằng Docker Compose
         Write-Host "🚀 Deploying with Docker Compose..."
         docker-compose up -d --build
 
     - name: Verify & Auto Rollback
       run: |
-        # Lấy port host để check health (Ví dụ: "80:3000" -> lấy 80)
         $finalPort = "3000"
         $p = "${{ secrets.PORT_RUN_CONTAINER }}"
         if ($p -match '^(\d+):') { $finalPort = $matches[1] } elseif ($p -as [int]) { $finalPort = $p }
 
-        $url = "http://localhost:$finalPort/health"
-        $success = $false
-        
+        $url = "http://localhost:$($finalPort)/health"
         Write-Host "🔍 Smart Check: Detecting app at $url"
         Start-Sleep -s 10
 
+        $success = $false
         for ($i=1; $i -le 3; $i++) {
             try {
                 Write-Host "📡 Attempt $($i): Checking health..."
                 $resp = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 5
-                if ($resp.status -eq "UP" -or $resp.message -ne $null) {
+                if ($resp.status -eq "UP") {
                     Write-Host "✅ [SUCCESS] App is healthy!"
                     $success = $true; break
                 }
@@ -82,23 +99,18 @@ jobs:
 
         if (-not $success) {
             Write-Error "❌ Health check FAILED! Rolling back..."
-            # Xóa bản lỗi vừa chạy bởi Compose
             docker-compose down
-            
             $hasBackup = docker ps -a -q --filter "name=class_ci-cd_backup"
             if ($hasBackup) {
-                Write-Host "♻️ Restoring backup container..."
                 docker rename class_ci-cd_backup class_ci-cd
                 docker start class_ci-cd
-                Write-Host "✅ [ROLLBACK] Previous version restored."
             }
             exit 1
         } else {
-            Write-Host "🎉 Deployment stable. Cleaning up backup..."
             docker rm -f class_ci-cd_backup 2>$null
         }
 
-    - name: Docker Retention Policy (Cleanup)
+    - name: Docker Retention Policy
       if: always()
       run: |
         $ErrorActionPreference = "SilentlyContinue"
@@ -107,11 +119,11 @@ jobs:
         $repo = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd"
         $oldImages = docker images --filter "reference=$repo" --format "{{.ID}}" | 
                      Where-Object { $_ -ne $runningImageId } | Select-Object -Skip 3
-        if ($oldImages) { $oldImages | ForEach-Object { docker rmi -f $_ } }
+        if ($oldImages) { foreach ($id in $oldImages) { try { docker rmi -f $id } catch {} } }
         exit 0
 
   notification:
-    needs: build-and-deploy
+    needs: deploy
     runs-on: ubuntu-latest
     if: always()
     steps:
