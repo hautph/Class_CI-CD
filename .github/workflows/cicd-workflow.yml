@@ -7,7 +7,6 @@ on:
 jobs:
   build-and-deploy:
     runs-on: self-hosted
-    
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
@@ -37,10 +36,8 @@ jobs:
         if (-not $rawPort) { $rawPort = "3000:3000" }
         $image = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd:latest"
 
-        # 1. Dọn dẹp bản backup cũ (nếu có từ lần trước)
         docker rm -f class_ci-cd_backup 2>$null
 
-        # 2. Nếu container hiện tại đang chạy, đổi tên thành backup
         $current = docker ps -a -q --filter "name=class_ci-cd"
         if ($current) {
             Write-Host "📦 Backing up current version..."
@@ -48,7 +45,6 @@ jobs:
             docker stop class_ci-cd_backup
         }
         
-        # 3. Chạy container phiên bản mới
         Write-Host "🚀 Deploying new version on port $rawPort..."
         docker run -d `
           -p "$rawPort" `
@@ -58,7 +54,6 @@ jobs:
 
     - name: Verify & Auto Rollback
       run: |
-        # Tìm port để check health (ví dụ "80:3000" -> lấy 80)
         $finalPort = "3000"
         $p = "${{ secrets.PORT_RUN_CONTAINER }}"
         if ($p -match '^(\d+):') { $finalPort = $matches[1] } elseif ($p -as [int]) { $finalPort = $p }
@@ -67,7 +62,7 @@ jobs:
         $success = $false
         
         Write-Host "🔍 Smart Check: Detecting app at $url"
-        Start-Sleep -s 8 # Đợi app khởi động
+        Start-Sleep -s 8
 
         for ($i=1; $i -le 3; $i++) {
             try {
@@ -85,27 +80,24 @@ jobs:
 
         if (-not $success) {
             Write-Error "❌ Health check FAILED! Starting Rollback..."
-            
-            # Xóa bản lỗi
             docker rm -f class_ci-cd
-            
-            # Kiểm tra xem có bản backup không để khôi phục
             $hasBackup = docker ps -a -q --filter "name=class_ci-cd_backup"
             if ($hasBackup) {
                 Write-Host "♻️ Restoring backup container..."
                 docker rename class_ci-cd_backup class_ci-cd
                 docker start class_ci-cd
                 Write-Host "✅ [ROLLBACK] Previous version restored successfully."
-            } else {
-                Write-Host "⚠️ No backup found to restore."
             }
             exit 1
         } else {
-            # Thành công thì xóa bản backup để giải phóng tài nguyên
             Write-Host "🎉 Deployment stable. Cleaning up backup..."
             docker rm -f class_ci-cd_backup 2>$null
         }
 
+  notification:
+    needs: build-and-deploy
+    runs-on: ubuntu-latest
+    if: always()
     steps:
       - name: Send Telegram message
         uses: appleboy/telegram-action@master
