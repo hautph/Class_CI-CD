@@ -40,13 +40,20 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    # 5. Build và Push Image (Gắn tag theo SHA của commit để dễ rollback)
+        # 5. Build và Push Image
     - name: Build & Push Docker Image
       run: |
-        $IMAGE_NAME = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd"
-        docker build -t $IMAGE_NAME:latest -t $IMAGE_NAME:${{ github.sha }} .
-        docker push $IMAGE_NAME:latest
-        docker push $IMAGE_NAME:${{ github.sha }}
+        # Định nghĩa trực tiếp tên Image để tránh lỗi biến PowerShell
+        $fullImageName = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd"
+        
+        Write-Host "Building image: $fullImageName"
+        # Thực hiện build với 2 tag
+        docker build -t "${fullImageName}:latest" -t "${fullImageName}:${{ github.sha }}" .
+        
+        Write-Host "Pushing images to Docker Hub..."
+        docker push "${fullImageName}:latest"
+        docker push "${fullImageName}:${{ github.sha }}"
+
 
     # 6. Triển khai Container trên máy Windows
     - name: Update Docker Container
