@@ -1,19 +1,14 @@
-//* LIB
-const express = require("express");
-require('dotenv').config();
+require('dotenv').config(); // Dòng này cực kỳ quan trọng
+const express = require('express');
+const app = express();
 
-const server = express();
-server.use(express.json()); 
-const PORT = process.env.PORT
+// Sử dụng biến PORT từ .env, nếu không có thì mặc định là 3000
+const PORT = process.env.PORT || 3000; 
 
-
-server.get("/ci-cd", async (_, res, ___) => {
-  res.status(200).json({
-    status: 200,
-    message:"CI-CD By Nguyen Tien Tai Ok 🤖"
-  })
+app.get('/', (req, res) => {
+    res.send('Hello CI/CD!');
 });
 
-server.listen(PORT, async () => {
-  console.log(`Server running http://localhost:${PORT}`);
+app.listen(PORT, () => {
+    console.log(`Server running http://localhost:${PORT}`);
 });
