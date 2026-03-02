@@ -33,7 +33,7 @@ jobs:
 
     - name: Created file .env
       run: |
-        touch .env
+        run: New-Item -Path .env -ItemType File
         echo ${{ secrets.PROD_ENV }} > .env
 
     - name: Restart Class CI/CD service        
