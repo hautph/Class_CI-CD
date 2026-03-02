@@ -104,9 +104,11 @@ jobs:
         with:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
+          # Dùng HTML Format để tránh lỗi ký tự đặc biệt của Markdown
+          format: html
           message: |
-            🚀 *Workflow:* ${{ github.workflow }}
-            📊 *Status:* ${{ job.status }}
-            📝 *Commit:* ${{ github.event.head_commit.message }}
-            🔗 [View Changes](https://github.com{{ github.repository }}/commit/${{ github.sha }})
-          format: markdown
+            🚀 <b>Workflow:</b> ${{ github.workflow }}
+            📊 <b>Status:</b> ${{ job.status }}
+            📝 <b>Commit:</b> ${{ github.event.head_commit.message }}
+            🔗 <a href="https://github.com{{ github.repository }}/commit/${{ github.sha }}">View Changes</a>
+
