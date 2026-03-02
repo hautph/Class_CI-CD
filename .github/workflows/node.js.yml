@@ -1,41 +1,51 @@
-# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
-
 name: Node.js CI
 
 on:
   push:
     branches: [ "main" ]
-  # pull_request:
-  #   branches: [ "main" ]
 
 jobs:
   build:
-
     runs-on: self-hosted
 
     strategy:
       matrix:
+        # Khuyên dùng bản 20.x hoặc 22.x (LTS) để ổn định hơn
         node-version: [ 24.x ]
-        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
     steps:
     - uses: actions/checkout@v4
+    
     - name: Use Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v3
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
 
-    - name: Install dependencies and create lock file
-      run: |
-        npm install
+    - name: Install dependencies
+      run: npm install
 
     - name: Created file .env
       run: |
         $content = "${{ secrets.PROD_ENV }}"
         Set-Content -Path .env -Value $content
 
-    - name: Restart Class CI/CD service        
+    - name: Deploy or Restart with PM2
       run: |
-          pm2 restart class_cicd
+        # Lấy đường dẫn PM2 trên Windows
+        $PM2_PATH = "$env:APPDATA\npm\pm2.cmd"
+        
+        # Kiểm tra xem app đã tồn tại trong PM2 chưa
+        $appExists = & $PM2_PATH jlist | ConvertFrom-Json | Where-Object { $_.name -eq "class_cicd" }
+        
+        if ($appExists) {
+            Write-Host "Restarting existing app..."
+            & $PM2_PATH restart class_cicd --update-env
+        } else {
+            Write-Host "Starting new app..."
+            # Giả sử file chạy của bạn là app.js hoặc index.js
+            & $PM2_PATH start index.js --name class_cicd
+        }
+        
+        # Lưu cấu hình để tự khởi động lại khi máy reboot
+        & $PM2_PATH save
