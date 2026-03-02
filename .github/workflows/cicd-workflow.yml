@@ -74,20 +74,22 @@ jobs:
         if ($p -match '^(\d+):') { $finalPort = $matches[1] } elseif ($p -as [int]) { $finalPort = $p }
 
         Write-Host "🔍 Smart Check: Detecting app at http://localhost:$finalPort/health"
-        Start-Sleep -s 7 # Đợi app khởi động
+        Start-Sleep -s 7 
 
         $url = "http://localhost:$finalPort/health"
         $success = $false
+        
+        # Sửa lỗi Parser bằng cách dùng $(...) cho biến
         for ($i=1; $i -le 3; $i++) {
             try {
-                Write-Host "📡 Attempt $i: Checking $url ..."
+                Write-Host "📡 Attempt $($i): Checking $($url) ..."
                 $resp = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 5
                 if ($resp.status -eq "UP" -or $resp.message -ne $null) {
                     Write-Host "✅ [SUCCESS] App is healthy!"
                     $success = $true; break
                 }
             } catch {
-                Write-Host "⚠️ Not ready yet: $($_.Exception.Message)"
+                Write-Host "⚠️ Attempt $($i) - Not ready yet: $($_.Exception.Message)"
                 Start-Sleep -s 3
             }
         }
@@ -97,6 +99,7 @@ jobs:
             docker logs class_ci-cd --tail 30
             exit 1
         }
+      shell: pwsh
 
   notification:
     needs: build-and-deploy
