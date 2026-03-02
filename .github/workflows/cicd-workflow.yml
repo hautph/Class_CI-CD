@@ -1,4 +1,4 @@
-name: CICD + NodeJs +  Docker + Notification
+name: CICD + NodeJs + Docker + Notification
 
 on:
   push:
@@ -7,58 +7,85 @@ on:
   pull_request:
     branches:
       - main
-    
+
 jobs:
   build:
-    runs-on: [ubuntu-latest]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-      - name: Created file .env
+
+      - name: Create .env file
         run: |
-          touch .env
-          echo ${{ secrets.PROD_ENV }} > .env        
-      - name: Login to docker hub
-        # run: docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }} 
-        run: echo ${{ secrets.DOCKER_HUB_PASSWORD }} | docker login -u ${{ secrets.DOCKER_HUB_USERNAME }} --password-stdin
+          echo "${{ secrets.PROD_ENV }}" > .env
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
       - name: Build docker image
-        run: docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd .
-      - name: Publish image to docker hub
+        run: docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest .
+
+      - name: Publish image to Docker Hub
         run: docker push ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest
-        
+
   deploy:
     needs: build
-    runs-on: [Linux]
-    environment: PROD
+    # Dùng self-hosted nếu bạn chạy trên máy cá nhân/server riêng
+    runs-on: self-hosted
     steps:
-      - name: Pull latest source code ${{vars.POSITION}}
-        uses: actions/checkout@v2
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-      - name: Run file scripts
+      - name: Run custom scripts
+        # Kiểm tra file có tồn tại trước khi chạy để tránh lỗi
         run: |
+          if [ -f .github/scripts/custom.sh ]; then
             chmod +x .github/scripts/custom.sh
-            .github/scripts/custom.sh
+            bash .github/scripts/custom.sh
+          else
+            echo "Custom script not found, skipping..."
+          fi
         shell: bash
 
-      - name: Pull image from docker hub
-        run: docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest
-      - name: Delete old container || If not exit it will not error when we have options is true
-        run: docker rm -f class_ci-cd || true
-      - name: Run docker container
-        run: docker run -d -p ${{secrets.PORT_RUN_CONTAINER}} --name class_ci-cd ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd
-        
+      - name: Login to Docker Hub (Deploy side)
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+      - name: Update Docker Container
+        run: |
+          # Pull bản mới nhất về
+          docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest
+          
+          # Xóa container cũ nếu đang chạy (không báo lỗi nếu không có)
+          docker rm -f class_ci-cd || true
+          
+          # Chạy container mới
+          # Đảm bảo PORT_RUN_CONTAINER có định dạng như 3000:3000
+          docker run -d \
+            -p ${{ secrets.PORT_RUN_CONTAINER }} \
+            --name class_ci-cd \
+            ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest
+
   notification:
     needs: deploy
     runs-on: ubuntu-latest
+    # Chạy kể cả khi các bước trên thất bại để gửi thông báo lỗi
+    if: always()
     steps:
-      - name: send telegram message on push
+      - name: Send Telegram message
         uses: appleboy/telegram-action@master
-        with: 
-          to: ${{ secrets.TELEGRAM_TO }}  
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
-            Welcome to the workflow initiated by ${{vars.AUTHOR}} !
-            ${{ github.actor }} created commit:
-            Commit message: ${{ github.event.commits[0].message }}
+            🚀 Workflow Status: ${{ job.status }}
+            Initiated by: ${{ vars.AUTHOR }}
+            Actor: ${{ github.actor }}
+            Commit: ${{ github.event.head_commit.message }}
             Repository: ${{ github.repository }}
-            See changes: https://github.com/${{ github.repository }}/commit/${{github.sha}}
+            Link: https://github.com{{ github.repository }}/commit/${{ github.sha }}
