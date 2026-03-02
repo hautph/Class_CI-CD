@@ -33,8 +33,8 @@ jobs:
 
     - name: Created file .env
       run: |
-        run: New-Item -Path .env -ItemType File
-        echo ${{ secrets.PROD_ENV }} > .env
+        $content = "${{ secrets.PROD_ENV }}"
+        Set-Content -Path .env -Value $content
 
     - name: Restart Class CI/CD service        
       run: |
