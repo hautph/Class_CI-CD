@@ -1,4 +1,4 @@
-name: Enterprise CICD + NodeJs + Docker + HealthCheck
+name: Enterprise CICD + NodeJs + Docker + Smart HealthCheck
 
 on:
   push:
@@ -6,103 +6,102 @@ on:
 
 jobs:
   build-and-deploy:
-    # Chạy trên máy Windows (Self-hosted Runner)
     runs-on: self-hosted
     
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
 
-    # 1. Kiểm tra môi trường Node.js
-    - name: Setup Node.js
+    - name: Setup Node.js 20.x
       uses: actions/setup-node@v4
       with:
-        node-version: 24.x
+        node-version: 20.x
 
-    # 2. Cài đặt và Kiểm tra Code (Linting - Giúp code sạch hơn)
-    - name: Install & Lint
-      run: |
-        npm install
-        # Nếu bạn có eslint, hãy bật dòng dưới:
-        # npm run lint 
+    - name: Install dependencies
+      run: npm install
 
-    # 3. Tạo file cấu hình bảo mật .env
     - name: Create .env file
       run: |
         $content = "${{ secrets.PROD_ENV }}"
         if (-not $content) { Write-Error "PROD_ENV secret is missing!" }
         Set-Content -Path .env -Value $content
 
-    # 4. Đăng nhập Docker Hub
     - name: Login to Docker Hub
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-        # 5. Build và Push Image
     - name: Build & Push Docker Image
       run: |
-        # Định nghĩa trực tiếp tên Image để tránh lỗi biến PowerShell
-        $fullImageName = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd"
+        # Fix lỗi biến: Sử dụng trực tiếp secret để tạo tên image chuẩn
+        $repo = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd"
+        Write-Host "Building image: $repo"
         
-        Write-Host "Building image: $fullImageName"
-        # Thực hiện build với 2 tag
-        docker build -t "${fullImageName}:latest" -t "${fullImageName}:${{ github.sha }}" .
+        # Build với tag latest và SHA commit để dễ rollback
+        docker build -t "${repo}:latest" -t "${repo}:${{ github.sha }}" .
         
-        Write-Host "Pushing images to Docker Hub..."
-        docker push "${fullImageName}:latest"
-        docker push "${fullImageName}:${{ github.sha }}"
+        Write-Host "Pushing to Docker Hub..."
+        docker push "${repo}:latest"
+        docker push "${repo}:${{ github.sha }}"
 
-
-    # 6. Triển khai Container trên máy Windows
     - name: Update Docker Container
       run: |
-        $PORT = "${{ secrets.PORT_RUN_CONTAINER }}"
-        if (-not $PORT) { $PORT = "3000:3000" }
-        $IMAGE = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd:latest"
-
-        # Dọn dẹp container cũ an toàn bằng PowerShell
+        # 1. Xử lý Port an toàn
+        $rawPort = "${{ secrets.PORT_RUN_CONTAINER }}"
+        if (-not $rawPort) { $rawPort = "3000:3000" }
+        
+        # 2. Xóa container cũ nếu đang chạy
         $oldContainer = docker ps -a -q --filter "name=class_ci-cd"
         if ($oldContainer) {
-            Write-Host "Stopping and removing old container..."
+            Write-Host "Cleaning up old container..."
             docker rm -f class_ci-cd
         }
         
-        # Chạy container với chế độ tự khởi động lại (Restart Policy)
-        Write-Host "Deploying new container on port $PORT..."
+        # 3. Chạy container mới
+        Write-Host "Deploying container on port $rawPort..."
         docker run -d `
-          -p "$PORT" `
+          -p "$rawPort" `
           --name class_ci-cd `
           --restart always `
-          "$IMAGE"
+          "${{ secrets.DOCKER_USERNAME }}/class_ci-cd:latest"
 
-    # 7. Health Check (Đợi app khởi động và kiểm tra xem có sống không)
-    - name: Verify Deployment (Health Check)
+    - name: Verify Deployment (Smart Health Check)
       run: |
-        # Đợi 5 giây cho app khởi động hẳn
-        Start-Sleep -s 5
-        $LOCAL_PORT = ("${{ secrets.PORT_RUN_CONTAINER }}".Split(':')[0])
-        if (-not $LOCAL_PORT) { $LOCAL_PORT = "3000" }
-        
-        Write-Host "Checking health at http://localhost:$LOCAL_PORT/health ..."
-        try {
-            $response = Invoke-WebRequest -Uri "http://localhost:$LOCAL_PORT/health" -UseBasicParsing
-            if ($response.StatusCode -eq 200) {
-                Write-Host "✅ App is UP and Running!"
-            } else {
-                throw "❌ App returned status $($response.StatusCode)"
+        # Tìm port ngoài (host port) từ chuỗi "80:3000" hoặc mặc định 3000
+        $finalPort = "3000"
+        $p = "${{ secrets.PORT_RUN_CONTAINER }}"
+        if ($p -match '^(\d+):') { $finalPort = $matches[1] } elseif ($p -as [int]) { $finalPort = $p }
+
+        Write-Host "🔍 Smart Check: Detecting app at http://localhost:$finalPort/health"
+        Start-Sleep -s 7 # Đợi app khởi động
+
+        $url = "http://localhost:$finalPort/health"
+        $success = $false
+        for ($i=1; $i -le 3; $i++) {
+            try {
+                Write-Host "📡 Attempt $i: Checking $url ..."
+                $resp = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 5
+                if ($resp.status -eq "UP" -or $resp.message -ne $null) {
+                    Write-Host "✅ [SUCCESS] App is healthy!"
+                    $success = $true; break
+                }
+            } catch {
+                Write-Host "⚠️ Not ready yet: $($_.Exception.Message)"
+                Start-Sleep -s 3
             }
-        } catch {
-            Write-Error "❌ Health check failed! App might be down."
+        }
+
+        if (-not $success) {
+            Write-Error "❌ Health check failed!"
+            docker logs class_ci-cd --tail 30
             exit 1
         }
 
   notification:
     needs: build-and-deploy
     runs-on: ubuntu-latest
-    # Vẫn giữ disable theo ý bạn, đổi thành 'always()' để bật lại
-    if: false 
+    if: false # Đổi thành always() khi muốn bật lại Telegram
     steps:
       - name: Send Telegram message
         uses: appleboy/telegram-action@master
@@ -110,8 +109,7 @@ jobs:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
-            🚀 *Workflow Status:* ${{ job.status }}
-            👤 *Actor:* ${{ github.actor }}
-            📝 *Commit:* ${{ github.event.head_commit.message }}
-            🔗 [View Commit](https://github.com{{ github.repository }}/commit/${{ github.sha }})
-          format: markdown
+            🚀 Workflow: ${{ job.status }}
+            Actor: ${{ github.actor }}
+            Commit: ${{ github.event.head_commit.message }}
+            Link: https://github.com{{ github.repository }}/commit/${{ github.sha }}
