@@ -101,11 +101,24 @@ jobs:
       if: always()
       run: |
         Write-Host "🧹 Cleaning up unused Docker images..."
+        # 1. Xóa các image rác (dangling)
         docker image prune -f
-        # Chỉ giữ lại 3 image gần nhất của project này
+        
+        # 2. Lấy ID của image đang chạy để tránh đụng độ
+        $runningImageId = docker ps --filter "name=class_ci-cd" --format "{{.Image}}"
         $repo = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd"
-        $oldImages = docker images --filter "reference=$repo" --format "{{.ID}}" | Select-Object -Skip 3
-        if ($oldImages) { $oldImages | ForEach-Object { docker rmi -f $_ } }
+        
+        # 3. Lấy danh sách image cũ, loại bỏ image đang chạy và giữ lại 3 bản mới nhất
+        $oldImages = docker images --filter "reference=$repo" --format "{{.ID}}" | 
+                     Where-Object { $_ -ne $runningImageId } | 
+                     Select-Object -Skip 3
+        
+        if ($oldImages) { 
+            Write-Host "🗑️ Removing $($oldImages.Count) old images..."
+            $oldImages | ForEach-Object { docker rmi -f $_ 2>$null } 
+        }
+        Write-Host "✅ Cleanup finished."
+
 
   notification:
     needs: build-and-deploy
