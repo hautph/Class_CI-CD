@@ -7,10 +7,10 @@ WORKDIR /app
 # Copy package.json và package-lock.json trước để tận dụng Docker Cache
 COPY package*.json ./
 
-# Cài đặt dependencies (chỉ cài production nếu không cần build bước phụ)
+# Cài đặt dependencies
 RUN npm ci --only=production
 
-# Copy toàn bộ mã nguồn (bao gồm thư mục src và file server.js)
+# Copy toàn bộ mã nguồn
 COPY . .
 
 # Bước 2: Production stage (Tạo image nhẹ nhất có thể)
@@ -24,15 +24,22 @@ COPY --from=build /app/src ./src
 COPY --from=build /app/server.js ./server.js
 COPY --from=build /app/package.json ./package.json
 
+# --- FIX START ---
+# Loại bỏ npm và corepack khỏi image cuối cùng.
+# Ứng dụng production không cần công cụ quản lý gói (package manager) để chạy.
+# Việc này xóa các thư mục chứa lỗ hổng bảo mật mà Trivy đã phát hiện.
+RUN rm -rf /usr/local/lib/node_modules/npm && \
+    rm -rf /usr/local/lib/node_modules/corepack
+# --- FIX END ---
+
 # Cấu hình biến môi trường mặc định
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Mở cổng 3000 (phải khớp với cổng app.listen trong server.js)
+# Mở cổng 3000
 EXPOSE 3000
 
-# Sử dụng dumb-init để xử lý các tín hiệu (SIGTERM, SIGINT) tốt hơn trên Docker
-# (Tùy chọn: giúp Graceful Shutdown hoạt động chuẩn hơn)
+# Cài đặt dumb-init
 RUN apk add --no-cache dumb-init
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 
