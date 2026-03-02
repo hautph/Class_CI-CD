@@ -1,4 +1,4 @@
-name: Enterprise CICD + NodeJs + Docker + Smart HealthCheck
+name: Enterprise CICD + Docker + Auto Rollback
 
 on:
   push:
@@ -11,14 +11,6 @@ jobs:
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
-
-    - name: Setup Node.js 20.x
-      uses: actions/setup-node@v4
-      with:
-        node-version: 20.x
-
-    - name: Install dependencies
-      run: npm install
 
     - name: Create .env file
       run: |
@@ -34,77 +26,90 @@ jobs:
 
     - name: Build & Push Docker Image
       run: |
-        # Fix lỗi biến: Sử dụng trực tiếp secret để tạo tên image chuẩn
         $repo = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd"
-        Write-Host "Building image: $repo"
-        
-        # Build với tag latest và SHA commit để dễ rollback
         docker build -t "${repo}:latest" -t "${repo}:${{ github.sha }}" .
-        
-        Write-Host "Pushing to Docker Hub..."
         docker push "${repo}:latest"
         docker push "${repo}:${{ github.sha }}"
 
-    - name: Update Docker Container
+    - name: Update Docker Container (with Backup)
       run: |
-        # 1. Xử lý Port an toàn
         $rawPort = "${{ secrets.PORT_RUN_CONTAINER }}"
         if (-not $rawPort) { $rawPort = "3000:3000" }
-        
-        # 2. Xóa container cũ nếu đang chạy
-        $oldContainer = docker ps -a -q --filter "name=class_ci-cd"
-        if ($oldContainer) {
-            Write-Host "Cleaning up old container..."
-            docker rm -f class_ci-cd
+        $image = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd:latest"
+
+        # 1. Dọn dẹp bản backup cũ (nếu có từ lần trước)
+        docker rm -f class_ci-cd_backup 2>$null
+
+        # 2. Nếu container hiện tại đang chạy, đổi tên thành backup
+        $current = docker ps -a -q --filter "name=class_ci-cd"
+        if ($current) {
+            Write-Host "📦 Backing up current version..."
+            docker rename class_ci-cd class_ci-cd_backup
+            docker stop class_ci-cd_backup
         }
         
-        # 3. Chạy container mới
-        Write-Host "Deploying container on port $rawPort..."
+        # 3. Chạy container phiên bản mới
+        Write-Host "🚀 Deploying new version on port $rawPort..."
         docker run -d `
           -p "$rawPort" `
           --name class_ci-cd `
           --restart always `
-          "${{ secrets.DOCKER_USERNAME }}/class_ci-cd:latest"
+          "$image"
 
-    - name: Verify Deployment (Smart Health Check)
+    - name: Verify & Auto Rollback
       run: |
-        # Tìm port ngoài (host port) từ chuỗi "80:3000" hoặc mặc định 3000
+        # Tìm port để check health (ví dụ "80:3000" -> lấy 80)
         $finalPort = "3000"
         $p = "${{ secrets.PORT_RUN_CONTAINER }}"
         if ($p -match '^(\d+):') { $finalPort = $matches[1] } elseif ($p -as [int]) { $finalPort = $p }
 
-        Write-Host "🔍 Smart Check: Detecting app at http://localhost:$finalPort/health"
-        Start-Sleep -s 7 
-
         $url = "http://localhost:$finalPort/health"
         $success = $false
         
-        # Sửa lỗi Parser bằng cách dùng $(...) cho biến
+        Write-Host "🔍 Smart Check: Detecting app at $url"
+        Start-Sleep -s 8 # Đợi app khởi động
+
         for ($i=1; $i -le 3; $i++) {
             try {
-                Write-Host "📡 Attempt $($i): Checking $($url) ..."
+                Write-Host "📡 Attempt $($i): Checking health..."
                 $resp = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 5
                 if ($resp.status -eq "UP" -or $resp.message -ne $null) {
                     Write-Host "✅ [SUCCESS] App is healthy!"
                     $success = $true; break
                 }
             } catch {
-                Write-Host "⚠️ Attempt $($i) - Not ready yet: $($_.Exception.Message)"
-                Start-Sleep -s 3
+                Write-Host "⚠️ Attempt $($i) - Not ready yet..."
+                Start-Sleep -s 4
             }
         }
 
         if (-not $success) {
-            Write-Error "❌ Health check failed!"
-            docker logs class_ci-cd --tail 30
+            Write-Error "❌ Health check FAILED! Starting Rollback..."
+            
+            # Xóa bản lỗi
+            docker rm -f class_ci-cd
+            
+            # Kiểm tra xem có bản backup không để khôi phục
+            $hasBackup = docker ps -a -q --filter "name=class_ci-cd_backup"
+            if ($hasBackup) {
+                Write-Host "♻️ Restoring backup container..."
+                docker rename class_ci-cd_backup class_ci-cd
+                docker start class_ci-cd
+                Write-Host "✅ [ROLLBACK] Previous version restored successfully."
+            } else {
+                Write-Host "⚠️ No backup found to restore."
+            }
             exit 1
+        } else {
+            # Thành công thì xóa bản backup để giải phóng tài nguyên
+            Write-Host "🎉 Deployment stable. Cleaning up backup..."
+            docker rm -f class_ci-cd_backup 2>$null
         }
-      shell: pwsh
 
   notification:
     needs: build-and-deploy
     runs-on: ubuntu-latest
-    if: false # Đổi thành always() khi muốn bật lại Telegram
+    if: always() # Bật lại thông báo để bạn biết kết quả Rollback
     steps:
       - name: Send Telegram message
         uses: appleboy/telegram-action@master
@@ -112,7 +117,8 @@ jobs:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
-            🚀 Workflow: ${{ job.status }}
-            Actor: ${{ github.actor }}
-            Commit: ${{ github.event.head_commit.message }}
-            Link: https://github.com{{ github.repository }}/commit/${{ github.sha }}
+            🚀 *Workflow:* ${{ github.workflow }}
+            📊 *Status:* ${{ job.status }}
+            📝 *Commit:* ${{ github.event.head_commit.message }}
+            🔗 [View Changes](https://github.com{{ github.repository }}/commit/${{ github.sha }})
+          format: markdown
