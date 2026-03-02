@@ -106,10 +106,6 @@ jobs:
             docker rm -f class_ci-cd_backup 2>$null
         }
 
-  notification:
-    needs: build-and-deploy
-    runs-on: ubuntu-latest
-    if: always() # Bật lại thông báo để bạn biết kết quả Rollback
     steps:
       - name: Send Telegram message
         uses: appleboy/telegram-action@master
