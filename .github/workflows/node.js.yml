@@ -42,6 +42,9 @@ jobs:
       run: |
         $PM2_PATH = "$env:APPDATA\npm\pm2.cmd"
         
+        # Hiển thị các file đang có để kiểm tra (tùy chọn)
+        Get-ChildItem
+        
         # Kiểm tra xem app 'class_cicd' đã tồn tại chưa
         $appExists = & $PM2_PATH jlist | ConvertFrom-Json | Where-Object { $_.name -eq "class_cicd" }
         
@@ -50,9 +53,9 @@ jobs:
             & $PM2_PATH restart class_cicd --update-env
         } else {
             Write-Host "--- Starting new app ---"
-            # Lưu ý: Thay index.js bằng file chạy chính của bạn (app.js, server.js...)
-            & $PM2_PATH start index.js --name class_cicd
+            # Dùng .\ để chỉ định file ở thư mục hiện tại
+            # THAY 'index.js' THÀNH TÊN FILE CHẠY CỦA BẠN (ví dụ app.js)
+            & $PM2_PATH start .\server.js --name class_cicd
         }
         
-        # Lưu lại danh sách để tự khởi động khi máy reboot
         & $PM2_PATH save
