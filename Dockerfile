@@ -29,8 +29,12 @@ COPY --from=build /app/package.json ./package.json
 # Ứng dụng production không cần công cụ quản lý gói (package manager) để chạy.
 # Việc này xóa các thư mục chứa lỗ hổng bảo mật mà Trivy đã phát hiện.
 RUN rm -rf /usr/local/lib/node_modules/npm && \
-    rm -rf /usr/local/lib/node_modules/corepack
+    rm -rf /usr/local/lib/node_modules/corepack && \
+    rm -rf /usr/local/bin/npm
 # --- FIX END ---
+
+# 2. Tạo user mới và cấp quyền (Alpine đã có sẵn user 'node')
+USER node
 
 # Cấu hình biến môi trường mặc định
 ENV NODE_ENV=production

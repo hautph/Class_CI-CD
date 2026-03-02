@@ -1,15 +1,25 @@
-name: DevSecOps Pipeline + Docker Compose + Trivy + Auto Rollback
+name: Ultimate DevSecOps Pipeline + Docker Compose + Security + Rollback
 
 on:
   push:
     branches: [ "main" ]
 
 jobs:
-  build-and-security:
+  security-and-build:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
+
+    # 1. SAST: Quét mã nguồn tìm lỗi logic bảo mật
+    - name: Static Analysis (njsscan)
+      uses: ajinabraham/njsscan-action@master
+      with:
+        args: '.'
+
+    # 2. SCA: Quét lỗ hổng trong các thư viện npm
+    - name: Dependency Scan (npm audit)
+      run: npm install && npm audit --audit-level=high
 
     - name: Login to Docker Hub
       uses: docker/login-action@v3
@@ -21,13 +31,13 @@ jobs:
       run: |
         docker build -t ${{ secrets.DOCKER_USERNAME }}/class_ci-cd:${{ github.sha }} .
 
-    # QUÉT BẢO MẬT (TRIVY): Chặn nếu có lỗi CRITICAL/HIGH
+    # 3. CONTAINER SCAN: Quét lỗ hổng trong Docker Image
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: '${{ secrets.DOCKER_USERNAME }}/class_ci-cd:${{ github.sha }}'
         format: 'table'
-        exit-code: '1'
+        exit-code: '1' # Chặn pipeline nếu có lỗi CRITICAL
         ignore-unfixed: true
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
@@ -39,7 +49,7 @@ jobs:
         docker push ${{ secrets.DOCKER_USERNAME }}/class_ci-cd:latest
 
   deploy:
-    needs: build-and-security
+    needs: security-and-build
     runs-on: self-hosted
     steps:
     - name: Checkout source
@@ -53,17 +63,14 @@ jobs:
 
     - name: Update with Docker Compose (with Backup)
       run: |
-        # Thiết lập môi trường cho Compose
         $env:DOCKER_USERNAME = "${{ secrets.DOCKER_USERNAME }}"
         $rawPort = "${{ secrets.PORT_RUN_CONTAINER }}"
         if (-not $rawPort) { $rawPort = "3000:3000" }
         $env:PORT_CONFIG = $rawPort
 
-        # Ép máy chủ tải bản image mới nhất đã qua kiểm duyệt bảo mật
-        Write-Host "📥 Pulling latest image from Docker Hub..."
+        Write-Host "📥 Pulling latest image..."
         docker pull "${env:DOCKER_USERNAME}/class_ci-cd:latest"
 
-        # Backup container cũ
         docker rm -f class_ci-cd_backup 2>$null
         $current = docker ps -a -q --filter "name=class_ci-cd"
         if ($current) {
@@ -72,7 +79,6 @@ jobs:
             docker stop class_ci-cd_backup
         }
         
-        # Triển khai bằng Compose với flag force-recreate
         Write-Host "🚀 Deploying with Docker Compose..."
         docker-compose up -d --force-recreate
 
@@ -84,37 +90,55 @@ jobs:
 
         $url = "http://localhost:$($finalPort)/health"
         Write-Host "🔍 Smart Check: Detecting app at $url"
-        Start-Sleep -s 12 # Tăng thời gian đợi khởi động
+        Start-Sleep -s 12
 
         $success = $false
         for ($i=1; $i -le 3; $i++) {
             try {
                 Write-Host "📡 Attempt $($i): Checking health..."
                 $resp = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 5
-                if ($resp.status -eq "UP" -or $resp.message -ne $null) {
+                if ($resp.status -eq "UP") {
                     Write-Host "✅ [SUCCESS] App is healthy!"
                     $success = $true; break
                 }
             } catch {
-                Write-Host "⚠️ Attempt $($i) - Not ready yet: $($_.Exception.Message)"
+                Write-Host "⚠️ Attempt $($i) - Not ready yet..."
                 Start-Sleep -s 5
             }
         }
 
         if (-not $success) {
-            Write-Error "❌ Health check FAILED! Starting Rollback..."
+            Write-Error "❌ Health check FAILED! Rolling back..."
             docker-compose down
             $hasBackup = docker ps -a -q --filter "name=class_ci-cd_backup"
             if ($hasBackup) {
-                Write-Host "♻️ Restoring backup container..."
                 docker rename class_ci-cd_backup class_ci-cd
                 docker start class_ci-cd
             }
             exit 1
         } else {
-            Write-Host "🎉 Deployment stable. Cleaning up backup..."
             docker rm -f class_ci-cd_backup 2>$null
         }
+
+    # 4. DAST: Quét ứng dụng đang chạy để tìm lỗi bảo mật thực tế (Web Baseline)
+        # 4. DAST: Chạy OWASP ZAP Baseline Scan dưới dạng Container
+    - name: Run OWASP ZAP Baseline Scan (Container)
+      run: |
+        # Lấy Port ngoài để quét (mặc định 3000 nếu không có cấu hình)
+        $finalPort = "3000"
+        $p = "${{ secrets.PORT_RUN_CONTAINER }}"
+        if ($p -match '^(\d+):') { $finalPort = $matches[1] } elseif ($p -as [int]) { $finalPort = $p }
+        
+        Write-Host "🛡️ Starting DAST Scan on http://localhost:$($finalPort) ..."
+        
+        # Chạy ZAP container. 
+        # --network="host" giúp container ZAP thấy được app đang chạy trên localhost của Windows
+        docker run --rm `
+          --network="host" `
+          ghcr.io/zaproxy/zaproxy:stable zap-baseline.py `
+          -t "http://localhost:$($finalPort)" `
+          -I || Write-Host "⚠️ ZAP found some alerts, check logs for details."
+      shell: pwsh
 
     - name: Docker Retention Policy (Cleanup)
       if: always()

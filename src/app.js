@@ -1,5 +1,15 @@
 const express = require('express');
 const app = express();
+const helmet = require('helmet');
+app.use(helmet());
+
+// Giới hạn số lượng request (Rate Limiting) để chống tấn công DOS
+const rateLimit = require('express-rate-limit');
+const limiter = rateLimit({
+	windowMs: 15 * 60 * 1000, // 15 phút
+	max: 100 // Tối đa 100 request/IP
+});
+app.use(limiter);
 
 // Middleware đọc dữ liệu JSON từ Request
 app.use(express.json());
