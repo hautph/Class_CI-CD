@@ -34,18 +34,24 @@ jobs:
 
     - name: Update Docker Container
       run: |
-        # Kiểm tra và xóa container cũ bằng PowerShell
+        # Lấy giá trị port từ Secret, nếu trống thì dùng mặc định 3000:3000
+        $PORT = "${{ secrets.PORT_RUN_CONTAINER }}"
+        if (-not $PORT) { $PORT = "3000:3000" }
+
+        # Kiểm tra và xóa container cũ
         $oldContainer = docker ps -a -q --filter "name=class_ci-cd"
         if ($oldContainer) {
             Write-Host "Stopping and removing old container..."
             docker rm -f class_ci-cd
         }
         
-        # Chạy container mới (Dấu ` là ký tự nối dòng của PowerShell trên Windows)
+        # Chạy container mới
+        Write-Host "Starting container on port $PORT..."
         docker run -d `
-          -p "${{ secrets.PORT_RUN_CONTAINER }}" `
+          -p "$PORT" `
           --name class_ci-cd `
           "${{ secrets.DOCKER_USERNAME }}/class_ci-cd:latest"
+
 
   notification:
     needs: build-and-deploy
