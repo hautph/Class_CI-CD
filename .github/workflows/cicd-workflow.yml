@@ -128,14 +128,17 @@ jobs:
         
         Write-Host "🛡️ Starting DAST Scan on http://host.docker.internal:$($finalPort) ..."
         
-        # Sửa: Chỉ định file report cụ thể để tránh lỗi 'Is a directory'
+        # LỆNH CHUẨN: 
+        # --autooff: Tắt Automation Framework (để không đòi mount /zap/wrk)
+        # -s: Rút gọn log (chỉ hiện lỗi, không hiện Pass)
         docker run --rm `
           ghcr.io/zaproxy/zaproxy:stable zap-baseline.py `
           -t "http://host.docker.internal:$($finalPort)" `
-          -r report.html `
+          --autooff `
+          -s `
           -I
       shell: pwsh
-      continue-on-error: true # Đảm bảo workflow xanh kể cả khi có cảnh báo bảo mật
+      continue-on-error: true
 
     - name: Docker Retention Policy (Cleanup)
       if: always()
