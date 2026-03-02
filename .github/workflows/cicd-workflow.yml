@@ -2,79 +2,72 @@ name: CICD + NodeJs + Docker + Notification
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+    branches: [ "main" ]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Create .env file
-        run: |
-          echo "${{ secrets.PROD_ENV }}" > .env
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
-
-      - name: Build docker image
-        run: docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest .
-
-      - name: Publish image to Docker Hub
-        run: docker push ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest
-
-  deploy:
-    needs: build
-    # Dùng self-hosted nếu bạn chạy trên máy cá nhân/server riêng
+  build-and-deploy:
+    # Chạy trực tiếp trên máy Windows của bạn
     runs-on: self-hosted
+
     steps:
-      - name: Checkout source code
-        uses: actions/checkout@v4
+    - name: Checkout source
+      uses: actions/checkout@v4
 
-      - name: Run custom scripts
-        # Kiểm tra file có tồn tại trước khi chạy để tránh lỗi
-        run: |
-          if [ -f .github/scripts/custom.sh ]; then
-            chmod +x .github/scripts/custom.sh
+    - name: Use Node.js 24.x
+      uses: actions/setup-node@v3
+      with:
+        node-version: 24.x
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Create .env file
+      run: |
+        $content = "${{ secrets.PROD_ENV }}"
+        Set-Content -Path .env -Value $content
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        # Lưu ý: Kiểm tra tên Secret trên GitHub là DOCKER_USERNAME hay DOCKER_HUB_USERNAME
+        username: ${{ secrets.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+    - name: Build Docker Image
+      run: |
+        docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest .
+
+    - name: Publish Image to Docker Hub
+      run: |
+        docker push ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest
+
+    - name: Run Custom Script (Windows compatible)
+      run: |
+        if (Test-Path ".github/scripts/custom.sh") {
+            # Nếu có bash (Git Bash), chạy bằng bash, nếu không thì bỏ qua
             bash .github/scripts/custom.sh
-          else
-            echo "Custom script not found, skipping..."
-          fi
-        shell: bash
+        } else {
+            Write-Host "Custom script not found, skipping..."
+        }
 
-      - name: Login to Docker Hub (Deploy side)
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
-
-      - name: Update Docker Container
-        run: |
-          # Pull bản mới nhất về
-          docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest
-          
-          # Xóa container cũ nếu đang chạy (không báo lỗi nếu không có)
-          docker rm -f class_ci-cd || true
-          
-          # Chạy container mới
-          # Đảm bảo PORT_RUN_CONTAINER có định dạng như 3000:3000
-          docker run -d \
-            -p ${{ secrets.PORT_RUN_CONTAINER }} \
-            --name class_ci-cd \
-            ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest
+    - name: Update Docker Container
+      run: |
+        # Dừng và xóa container cũ nếu tồn tại
+        $containerExists = docker ps -a -q --filter "name=class_ci-cd"
+        if ($containerExists) {
+            docker rm -f class_ci-cd
+        }
+        
+        # Chạy container mới
+        # Đảm bảo PORT_RUN_CONTAINER là "3000:3000"
+        docker run -d `
+          -p ${{ secrets.PORT_RUN_CONTAINER }} `
+          --name class_ci-cd `
+          ${{ secrets.DOCKER_HUB_USERNAME }}/class_ci-cd:latest
 
   notification:
-    needs: deploy
+    needs: build-and-deploy
     runs-on: ubuntu-latest
-    # Chạy kể cả khi các bước trên thất bại để gửi thông báo lỗi
     if: always()
     steps:
       - name: Send Telegram message
@@ -84,8 +77,6 @@ jobs:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
             🚀 Workflow Status: ${{ job.status }}
-            Initiated by: ${{ vars.AUTHOR }}
             Actor: ${{ github.actor }}
             Commit: ${{ github.event.head_commit.message }}
-            Repository: ${{ github.repository }}
             Link: https://github.com{{ github.repository }}/commit/${{ github.sha }}
