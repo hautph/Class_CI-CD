@@ -1,4 +1,4 @@
-name: Enterprise CICD + Docker + Auto Rollback + Retention
+name: Enterprise CICD + Docker Compose + Auto Rollback
 
 on:
   push:
@@ -30,16 +30,18 @@ jobs:
         docker push "${repo}:latest"
         docker push "${repo}:${{ github.sha }}"
 
-    - name: Update Docker Container (with Backup)
+    - name: Update with Docker Compose (with Backup)
       run: |
+        # Thiết lập biến môi trường cho Docker Compose
+        $env:DOCKER_USERNAME = "${{ secrets.DOCKER_USERNAME }}"
         $rawPort = "${{ secrets.PORT_RUN_CONTAINER }}"
         if (-not $rawPort) { $rawPort = "3000:3000" }
-        $image = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd:latest"
+        $env:PORT_CONFIG = $rawPort
 
-        # Dọn dẹp backup cũ
+        # 1. Dọn dẹp backup cũ
         docker rm -f class_ci-cd_backup 2>$null
 
-        # Chuyển container hiện tại thành backup
+        # 2. Backup container hiện tại (đổi tên để giải phóng tên 'class_ci-cd' cho Compose)
         $current = docker ps -a -q --filter "name=class_ci-cd"
         if ($current) {
             Write-Host "📦 Backing up current version..."
@@ -47,16 +49,13 @@ jobs:
             docker stop class_ci-cd_backup
         }
         
-        # Triển khai bản mới
-        Write-Host "🚀 Deploying new version on port $rawPort..."
-        docker run -d `
-          -p "$rawPort" `
-          --name class_ci-cd `
-          --restart always `
-          "$image"
+        # 3. Triển khai bằng Docker Compose
+        Write-Host "🚀 Deploying with Docker Compose..."
+        docker-compose up -d --build
 
     - name: Verify & Auto Rollback
       run: |
+        # Lấy port host để check health (Ví dụ: "80:3000" -> lấy 80)
         $finalPort = "3000"
         $p = "${{ secrets.PORT_RUN_CONTAINER }}"
         if ($p -match '^(\d+):') { $finalPort = $matches[1] } elseif ($p -as [int]) { $finalPort = $p }
@@ -65,7 +64,7 @@ jobs:
         $success = $false
         
         Write-Host "🔍 Smart Check: Detecting app at $url"
-        Start-Sleep -s 10 # Đợi app khởi động ổn định
+        Start-Sleep -s 10
 
         for ($i=1; $i -le 3; $i++) {
             try {
@@ -82,8 +81,10 @@ jobs:
         }
 
         if (-not $success) {
-            Write-Error "❌ Health check FAILED! Starting Rollback..."
-            docker rm -f class_ci-cd
+            Write-Error "❌ Health check FAILED! Rolling back..."
+            # Xóa bản lỗi vừa chạy bởi Compose
+            docker-compose down
+            
             $hasBackup = docker ps -a -q --filter "name=class_ci-cd_backup"
             if ($hasBackup) {
                 Write-Host "♻️ Restoring backup container..."
@@ -100,32 +101,14 @@ jobs:
     - name: Docker Retention Policy (Cleanup)
       if: always()
       run: |
-        # Ép PowerShell không dừng lại khi gặp lỗi lệnh ngoài
         $ErrorActionPreference = "SilentlyContinue"
-        
-        Write-Host "🧹 Cleaning up unused Docker images..."
         docker image prune -f
-        
         $runningImageId = docker ps --filter "name=class_ci-cd" --format "{{.Image}}"
         $repo = "${{ secrets.DOCKER_USERNAME }}/class_ci-cd"
-        
         $oldImages = docker images --filter "reference=$repo" --format "{{.ID}}" | 
-                     Where-Object { $_ -ne $runningImageId } | 
-                     Select-Object -Skip 3
-        
-        if ($oldImages) { 
-            Write-Host "🗑️ Removing $($oldImages.Count) old images..."
-            # Sử dụng try-catch để nuốt lỗi nếu có conflict
-            foreach ($id in $oldImages) {
-                try { docker rmi -f $id } catch { }
-            }
-        }
-        
-        Write-Host "✅ Cleanup finished."
-        # Luôn thoát với mã 0 để GitHub không báo đỏ
+                     Where-Object { $_ -ne $runningImageId } | Select-Object -Skip 3
+        if ($oldImages) { $oldImages | ForEach-Object { docker rmi -f $_ } }
         exit 0
-
-
 
   notification:
     needs: build-and-deploy
