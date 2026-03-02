@@ -34,7 +34,7 @@ RUN rm -rf /usr/local/lib/node_modules/npm && \
 # --- FIX END ---
 
 # 2. Tạo user mới và cấp quyền (Alpine đã có sẵn user 'node')
-USER node
+# USER node
 
 # Cấu hình biến môi trường mặc định
 ENV NODE_ENV=production
