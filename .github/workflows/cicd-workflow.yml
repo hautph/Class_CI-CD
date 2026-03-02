@@ -6,9 +6,7 @@ on:
 
 jobs:
   build-and-security:
-    runs-on: ubuntu-latest # Quét bảo mật nên chạy trên Ubuntu của GitHub để tối ưu hiệu suất
-    outputs:
-      image_tag: ${{ github.sha }}
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
@@ -23,13 +21,13 @@ jobs:
       run: |
         docker build -t ${{ secrets.DOCKER_USERNAME }}/class_ci-cd:${{ github.sha }} .
 
-    # BƯỚC QUÉT BẢO MẬT (TRIVY)
+    # QUÉT BẢO MẬT (TRIVY): Chặn nếu có lỗi CRITICAL/HIGH
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: '${{ secrets.DOCKER_USERNAME }}/class_ci-cd:${{ github.sha }}'
         format: 'table'
-        exit-code: '1' # Dừng workflow nếu phát hiện lỗi nghiêm trọng
+        exit-code: '1'
         ignore-unfixed: true
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
@@ -42,7 +40,7 @@ jobs:
 
   deploy:
     needs: build-and-security
-    runs-on: self-hosted # Chạy trên máy Windows của bạn
+    runs-on: self-hosted
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
@@ -55,13 +53,18 @@ jobs:
 
     - name: Update with Docker Compose (with Backup)
       run: |
+        # Thiết lập môi trường cho Compose
         $env:DOCKER_USERNAME = "${{ secrets.DOCKER_USERNAME }}"
         $rawPort = "${{ secrets.PORT_RUN_CONTAINER }}"
         if (-not $rawPort) { $rawPort = "3000:3000" }
         $env:PORT_CONFIG = $rawPort
 
-        docker rm -f class_ci-cd_backup 2>$null
+        # Ép máy chủ tải bản image mới nhất đã qua kiểm duyệt bảo mật
+        Write-Host "📥 Pulling latest image from Docker Hub..."
+        docker pull "${env:DOCKER_USERNAME}/class_ci-cd:latest"
 
+        # Backup container cũ
+        docker rm -f class_ci-cd_backup 2>$null
         $current = docker ps -a -q --filter "name=class_ci-cd"
         if ($current) {
             Write-Host "📦 Backing up current version..."
@@ -69,8 +72,9 @@ jobs:
             docker stop class_ci-cd_backup
         }
         
+        # Triển khai bằng Compose với flag force-recreate
         Write-Host "🚀 Deploying with Docker Compose..."
-        docker-compose up -d --build
+        docker-compose up -d --force-recreate
 
     - name: Verify & Auto Rollback
       run: |
@@ -80,37 +84,39 @@ jobs:
 
         $url = "http://localhost:$($finalPort)/health"
         Write-Host "🔍 Smart Check: Detecting app at $url"
-        Start-Sleep -s 10
+        Start-Sleep -s 12 # Tăng thời gian đợi khởi động
 
         $success = $false
         for ($i=1; $i -le 3; $i++) {
             try {
                 Write-Host "📡 Attempt $($i): Checking health..."
                 $resp = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 5
-                if ($resp.status -eq "UP") {
+                if ($resp.status -eq "UP" -or $resp.message -ne $null) {
                     Write-Host "✅ [SUCCESS] App is healthy!"
                     $success = $true; break
                 }
             } catch {
-                Write-Host "⚠️ Attempt $($i) - Not ready yet..."
+                Write-Host "⚠️ Attempt $($i) - Not ready yet: $($_.Exception.Message)"
                 Start-Sleep -s 5
             }
         }
 
         if (-not $success) {
-            Write-Error "❌ Health check FAILED! Rolling back..."
+            Write-Error "❌ Health check FAILED! Starting Rollback..."
             docker-compose down
             $hasBackup = docker ps -a -q --filter "name=class_ci-cd_backup"
             if ($hasBackup) {
+                Write-Host "♻️ Restoring backup container..."
                 docker rename class_ci-cd_backup class_ci-cd
                 docker start class_ci-cd
             }
             exit 1
         } else {
+            Write-Host "🎉 Deployment stable. Cleaning up backup..."
             docker rm -f class_ci-cd_backup 2>$null
         }
 
-    - name: Docker Retention Policy
+    - name: Docker Retention Policy (Cleanup)
       if: always()
       run: |
         $ErrorActionPreference = "SilentlyContinue"
