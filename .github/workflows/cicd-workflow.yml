@@ -56,7 +56,8 @@ jobs:
   notification:
     needs: build-and-deploy
     runs-on: ubuntu-latest
-    if: always()
+    # Thay đổi ở đây: false sẽ khiến toàn bộ job này bị bỏ qua
+    if: false
     steps:
       - name: Send Telegram message
         uses: appleboy/telegram-action@master
@@ -68,3 +69,4 @@ jobs:
             Actor: ${{ github.actor }}
             Commit: ${{ github.event.head_commit.message }}
             Link: https://github.com{{ github.repository }}/commit/${{ github.sha }}
+
