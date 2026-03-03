@@ -1,12 +1,12 @@
 # Bước 1: Build stage
-FROM node:25.7.0-alpine3.23 AS build
+FROM node:slim AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production
 COPY . .
 
 # Bước 2: Production stage
-FROM node:25.7.0-alpine3.23
+FROM node:slim
 WORKDIR /app
 
 # --- CẤU HÌNH GIỜ VIỆT NAM (ICT) ---
