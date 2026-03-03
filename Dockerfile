@@ -1,5 +1,5 @@
 # --- Bước 1: Build stage ---
-FROM node:20-slim AS build
+FROM node:25-slim AS build
 WORKDIR /app
 # Chỉ copy file package để tận dụng cache layer
 COPY package*.json ./
@@ -8,7 +8,7 @@ RUN npm ci --only=production && npm cache clean --force
 COPY . .
 
 # --- Bước 2: Production stage ---
-FROM node:20-slim
+FROM node:25-slim
 WORKDIR /app
 
 # 1. Tối ưu cài đặt: Gộp lệnh, dùng --no-install-recommends và xóa cache apt
