@@ -1,12 +1,10 @@
 kernel:
   image: linuxkit/kernel:6.6.71
   cmdline: "console=ttyS0 console=tty0 page_poison=1"
-
 init:
   - linuxkit/init:v1.3.0
   - linuxkit/runc:v1.3.0
   - linuxkit/containerd:v1.3.0
-
 onboot:
   - name: format
     image: linuxkit/format:v1.1.0
@@ -14,29 +12,22 @@ onboot:
   - name: mount
     image: linuxkit/mount:v1.1.0
     command: ["/usr/bin/mount", "-label", "LOG_DATA", "/var/log"]
-
 services:
   - name: getty
     image: linuxkit/getty:v1.3.0
     env:
       - INSECURE=true
     command: ["/sbin/getty", "-n", "-l", "/bin/sh", "115200", "ttyS0"]
-
   - name: containerd
     image: linuxkit/containerd:v1.3.0
-
-  # --- NODE.JS APP BẢO MẬT ---
   - name: node-app
     image: node:20-alpine
     capabilities:
       - CAP_NET_BIND_SERVICE
     net: host
     binds:
-      - /etc/node-app:/app:ro # Mount code vào chế độ Read-only
-    cwd: /app
+      - /etc/node-app:/app:ro
     command: ["node", "server.js"]
-
-  # --- GIÁM SÁT FALCO ---
   - name: falco
     image: falcosecurity/falco-no-driver:latest
     capabilities:
@@ -49,16 +40,13 @@ services:
       - /proc:/host/proc:ro
       - /var/log:/var/log
     command: ["/usr/bin/falco", "-m", "modern-bpf", "-o", "file.filename=/var/log/falco.log"]
-
 files:
   - path: etc/shadow
     contents: 'root::19000:0:99999:7:::'
     mode: "0600"
-  # Copy file app.js vào trong OS của LinuxKit
   - path: etc/node-app/server.js
     source: server.js
     mode: "0644"
-
 trust:
   org:
     - linuxkit
