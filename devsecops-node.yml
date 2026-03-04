@@ -28,7 +28,6 @@ services:
   # --- NODE.JS APP BẢO MẬT ---
   - name: node-app
     image: node:20-alpine
-    user: "1000:1000" # Chạy với user không phải root (node user trong image alpine)
     capabilities:
       - CAP_NET_BIND_SERVICE
     net: host
