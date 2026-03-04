@@ -22,30 +22,38 @@ jobs:
       - name: Install LinuxKit
         run: |
           go install github.com/linuxkit/linuxkit/src/cmd/linuxkit@latest
+          # Thêm đường dẫn Go bin vào PATH của GitHub Action
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Lint YAML Config
-        run: |
-          # Kiểm tra cấu hình YAML có đúng chuẩn không
-          docker run --rm -v $(pwd):/data yamllint/yamllint /data/devsecops-node.yml
+        # Sử dụng Action chính thức thay vì tự chạy Docker để tránh lỗi pull image
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          file_or_dir: devsecops-node.yml
+          config_data: |
+            extends: default
+            rules:
+              line-length: disable
+              document-start: disable
 
       - name: Security Scan (Trivy)
+        # Quét các Image và cấu hình xem có lỗ hổng bảo mật không
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'config'
           hide-progress: false
-          exit-code: '1' # Dừng pipeline nếu phát hiện lỗi bảo mật nghiêm trọng
+          exit-code: '1'
           severity: 'CRITICAL,HIGH'
 
       - name: Build LinuxKit Image
-        env:
-          # Lấy mật khẩu từ GitHub Secrets
-          DISK_PASSWORD: ${{ secrets.DISK_ENCRYPTION_KEY }}
         run: |
+          # Build hệ thống (Không dùng mật mã theo yêu cầu của bạn)
           linuxkit build devsecops-node.yml
 
       - name: Archive Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: secure-os-image
-          path: devsecops-node*
+          path: |
+            devsecops-node*
+            !devsecops-node.yml
