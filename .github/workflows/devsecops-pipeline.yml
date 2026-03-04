@@ -21,7 +21,7 @@ jobs:
 
       - name: Install LinuxKit
         run: |
-          go install ://github.com
+          go install github.com/linuxkit/linuxkit/src/cmd/linuxkit@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Lint YAML Config
