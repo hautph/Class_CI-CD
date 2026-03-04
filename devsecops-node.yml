@@ -1,46 +1,34 @@
 kernel:
   image: linuxkit/kernel:6.6.71
   cmdline: "console=ttyS0 console=tty0 page_poison=1"
-
 init:
   - linuxkit/init:v1.3.0
   - linuxkit/runc:v1.3.0
   - linuxkit/containerd:v1.3.0
-
 onboot:
-  # 1. Thiet lap thiet bi ma hoa dm-crypt
   - name: dm-crypt
     image: linuxkit/dm-crypt:v1.1.0
     command: ["/usr/bin/crypto", "-passphrase", "${DISK_PASSWORD}", "encrypt", "/dev/vda", "encrypted_logs"]
-
-  # 2. Dinh dang phan vung da ma hoa
   - name: format
     image: linuxkit/format:v1.1.0
     command: ["/usr/bin/format", "-label", "ENC_LOGS", "/dev/mapper/encrypted_logs"]
-
-  # 3. Mount phan vung bao mat vao /var/log
   - name: mount
     image: linuxkit/mount:v1.1.0
     command: ["/usr/bin/mount", "-label", "ENC_LOGS", "/var/log"]
-
-  # 4. Quet he thong
   - name: sys-scan
     image: alpine:latest
     binds:
       - /host:/host
       - /var/log:/var/log
     command: ["sh", "-c", "apk add lynis && lynis audit system --quick > /var/log/lynis-report.txt"]
-
 services:
   - name: getty
     image: linuxkit/getty:v1.3.0
     env:
       - INSECURE=true
     command: ["/sbin/getty", "-n", "-l", "/bin/sh", "115200", "ttyS0"]
-
   - name: containerd
     image: linuxkit/containerd:v1.3.0
-
   - name: falco
     image: falcosecurity/falco-no-driver:latest
     capabilities:
@@ -55,13 +43,10 @@ services:
       - /lib/modules:/lib/modules:ro
       - /var/log:/var/log
     command: ["/usr/bin/falco", "-m", "modern-bpf", "-o", "file.filename=/var/log/falco.log"]
-
 files:
   - path: etc/shadow
     contents: 'root::19000:0:99999:7:::'
     mode: "0600"
-
 trust:
   org:
     - linuxkit
-
