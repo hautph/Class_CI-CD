@@ -1,34 +1,41 @@
 kernel:
   image: linuxkit/kernel:6.6.71
   cmdline: "console=ttyS0 console=tty0 page_poison=1"
+
 init:
   - linuxkit/init:v1.3.0
   - linuxkit/runc:v1.3.0
   - linuxkit/containerd:v1.3.0
+
 onboot:
-  - name: dm-crypt
-    image: linuxkit/dm-crypt:v1.1.0
-    command: ["/usr/bin/crypto", "-passphrase", "${DISK_PASSWORD}", "encrypt", "/dev/vda", "encrypted_logs"]
   - name: format
     image: linuxkit/format:v1.1.0
-    command: ["/usr/bin/format", "-label", "ENC_LOGS", "/dev/mapper/encrypted_logs"]
+    command: ["/usr/bin/format", "-label", "LOG_DATA", "/dev/vda"]
   - name: mount
     image: linuxkit/mount:v1.1.0
     command: ["/usr/bin/mount", "-label", "ENC_LOGS", "/var/log"]
-  - name: sys-scan
-    image: alpine:latest
-    binds:
-      - /host:/host
-      - /var/log:/var/log
-    command: ["sh", "-c", "apk add lynis && lynis audit system --quick > /var/log/lynis-report.txt"]
+
 services:
   - name: getty
     image: linuxkit/getty:v1.3.0
     env:
       - INSECURE=true
     command: ["/sbin/getty", "-n", "-l", "/bin/sh", "115200", "ttyS0"]
+
   - name: containerd
     image: linuxkit/containerd:v1.3.0
+
+  # --- ỨNG DỤNG WEB BẢO MẬT ---
+  - name: web-server
+    image: nginx:alpine
+    capabilities:
+      - CAP_NET_BIND_SERVICE # Chỉ cho phép chiếm dụng cổng mạng
+    net: host
+    binds:
+      - /var/log:/var/log/nginx # Đẩy log Nginx vào ổ đĩa bền vững
+    rootfsPropagation: shared
+
+  # --- GIÁM SÁT RUNTIME ---
   - name: falco
     image: falcosecurity/falco-no-driver:latest
     capabilities:
@@ -39,14 +46,14 @@ services:
       - /etc:/host/etc:ro
       - /dev:/dev
       - /proc:/host/proc:ro
-      - /boot:/host/boot:ro
-      - /lib/modules:/lib/modules:ro
       - /var/log:/var/log
     command: ["/usr/bin/falco", "-m", "modern-bpf", "-o", "file.filename=/var/log/falco.log"]
+
 files:
   - path: etc/shadow
     contents: 'root::19000:0:99999:7:::'
     mode: "0600"
+
 trust:
   org:
     - linuxkit
