@@ -8,22 +8,22 @@ init:
   - linuxkit/containerd:v1.3.0
 
 onboot:
-  # 1. Thiết lập thiết bị mã hóa dm-crypt
+  # 1. Thiet lap thiet bi ma hoa dm-crypt
   - name: dm-crypt
     image: linuxkit/dm-crypt:v1.1.0
     command: ["/usr/bin/crypto", "-passphrase", "${DISK_PASSWORD}", "encrypt", "/dev/vda", "encrypted_logs"]
 
-  # 2. Định dạng phân vùng đã mã hóa (lúc này là /dev/mapper/encrypted_logs)
+  # 2. Dinh dang phan vung da ma hoa
   - name: format
     image: linuxkit/format:v1.1.0
     command: ["/usr/bin/format", "-label", "ENC_LOGS", "/dev/mapper/encrypted_logs"]
 
-  # 3. Mount phân vùng bảo mật vào /var/log
+  # 3. Mount phan vung bao mat vao /var/log
   - name: mount
     image: linuxkit/mount:v1.1.0
     command: ["/usr/bin/mount", "-label", "ENC_LOGS", "/var/log"]
 
-  # 4. Quét hệ thống
+  # 4. Quet he thong
   - name: sys-scan
     image: alpine:latest
     binds:
@@ -35,19 +35,12 @@ services:
   - name: getty
     image: linuxkit/getty:v1.3.0
     env:
-     - INSECURE=true
+      - INSECURE=true
     command: ["/sbin/getty", "-n", "-l", "/bin/sh", "115200", "ttyS0"]
-    #readonly: true
 
   - name: containerd
     image: linuxkit/containerd:v1.3.0
-    # Containerd cần ghi vào một số nơi, nhưng ta có thể giới hạn nó
-    #binds:
-    #  - /var/run:/var/run
-    #  - /var/lib/containerd:/var/lib/containerd
-    #  - /etc/containerd:/etc/containerd
 
-  # Falco phải nằm cùng cấp độ thụt lề với getty và containerd
   - name: falco
     image: falcosecurity/falco-no-driver:latest
     capabilities:
@@ -60,9 +53,9 @@ services:
       - /proc:/host/proc:ro
       - /boot:/host/boot:ro
       - /lib/modules:/lib/modules:ro
-      - /var/log:/var/log # Ghi log của Falco vào đĩa bền vững
-    # command: ["/usr/bin/falco", "-m", "modern-bpf"]
+      - /var/log:/var/log
     command: ["/usr/bin/falco", "-m", "modern-bpf", "-o", "file.filename=/var/log/falco.log"]
+
 files:
   - path: etc/shadow
     contents: 'root::19000:0:99999:7:::'
@@ -71,3 +64,4 @@ files:
 trust:
   org:
     - linuxkit
+
