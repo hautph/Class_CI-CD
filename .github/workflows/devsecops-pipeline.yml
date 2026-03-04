@@ -20,6 +20,26 @@ jobs:
           go-version: '1.22'
           cache: false
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: |
+          # Tạo file package.json ảo nếu bạn chưa có để Snyk có cái để quét
+          if [ ! -f package.json ]; then
+            npm init -y
+          fi
+          npm install
+
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high # Chỉ chặn nếu có lỗi Nghiêm trọng hoặc Cao
+
       - name: Install LinuxKit
         run: |
           go install github.com/linuxkit/linuxkit/src/cmd/linuxkit@latest
